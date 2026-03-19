@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runtime2"
+version = "0.1.0"
+description = "Next-generation candle-based trading runtime"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+  { name = "runtime2" }
+]
+dependencies = []
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+markers = [
+  "regression: baseline regression suite required before restricted-live review",
+  "contracts: canonical contract and invariant tests",
+  "features: feature-layer tests",
+  "runtime_mode: runtime runner and mode-behavior tests",
+  "strategies: pure strategy logic tests",
+  "exchanges: exchange adapter and reconciliation scaffold tests",
+  "report_only_integration: report-only vertical-slice integration tests",
+  "paper_integration: paper-mode continuity and portfolio integration tests",
+  "reconciliation: reconciliation and unknown-execution recovery tests",
+  "observability: runtime observability and status-report tests",
+  "scenario_regression: operator-readable scenario regression coverage for runtime and portfolio behavior",
+]

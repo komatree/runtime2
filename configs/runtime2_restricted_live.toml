@@ -1,0 +1,37 @@
+# Minimal restricted-live rehearsal launcher config.
+# Bootstrap source: adapted from tests/config/test_rehearsal_launcher.py
+
+[runtime]
+mode = "restricted_live"
+cycle_id = "restricted-live-soak-bootstrap"
+reference_time = "2025-01-02T01:00:00+00:00"
+execution_timeframe = "4h"
+context_timeframe = "1d"
+execution_klines_file = "btcusdt_4h.json"
+context_klines_file = "btcusdt_1d.json"
+
+[instrument]
+instrument_id = "BTC-USDT"
+base_asset = "BTC"
+quote_asset = "USDT"
+price_precision = 2
+quantity_precision = 6
+
+[portfolio]
+cash_quote_asset = "USDT"
+initial_cash = "10000"
+
+[venue_profile]
+account_scope = "spot"
+maker_fee_bps = "7"
+taker_fee_bps = "10"
+supports_market_orders = true
+supports_post_only = true
+
+[strategy]
+breakout_threshold = "0.02"
+include_regime = true
+
+[binance]
+rest_base_url = "https://api.binance.com"
+websocket_base_url = "wss://stream.binance.com:9443"
