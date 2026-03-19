@@ -17,6 +17,37 @@ Read together with:
 
 ## Current Readiness Summary
 
+## Binance Live Checklist v1
+
+This checklist is for the next bounded operator / bounded micro-live run only.
+
+- keep the current broader `r5` baseline as the authoritative proof set
+- keep the same runtime/session lineage model used in `r5`
+- keep stale-output fail-if-exists behavior unchanged
+- keep restricted-live mutation safeguards unchanged
+- treat `executionRules` and `referencePrice` additions as watchpoints, not last-minute integration work
+- treat `expiryReason` / `eR` as tolerated optional metadata unless reviewed evidence proves a new operational need
+- keep the subscribe-based Spot WebSocket API UDS bootstrap path as the only accepted private bootstrap assumption
+- treat `permissionSets`, `amendAllowed`, `quoteOrderQtyMarketAllowed`, STP-related parsing expansion, `MAX_ASSET`, and `myFilters` as gap-awareness items, not bounded-run redesign work
+- keep unknown execution handling fail-closed and operator-visible
+- watch reconnect / heartbeat churn, request-weight behavior, order-count pressure, and timeout uncertainty explicitly during the run
+- keep Demo Mode out of this stage; it is a later test-ladder step
+
+## Known Gaps / Not In Scope For Bounded Run
+
+The following are intentionally not in scope for the next bounded run:
+
+- broader Binance live-hardening refactors
+- parser/model expansion for `executionRules` or `referencePrice`
+- surfacing `expiryReason` / `eR` as a new operator-facing lifecycle dimension
+- new handling for `permissionSets`, `amendAllowed`, `quoteOrderQtyMarketAllowed`, STP-specific metadata, `MAX_ASSET`, or `myFilters`
+- redesign of unknown execution handling
+- reconnect or heartbeat subsystem redesign
+- new rate-limit / order-count policy automation
+- Demo Mode execution
+
+These remain future-hardening items unless the bounded run shows a concrete regression that forces narrower remediation.
+
 ### Market Data
 
 - Public market-data normalization exists.
@@ -256,6 +287,13 @@ Updated recommendation:
   - real long-running soak evidence is collected and reviewed
   - expiry-driven restricted-live mutation remains blocked until later canonical private confirmation across reviewed evidence
   - all 6h / 12h / 24h soak sessions meet the documented minimum success thresholds
+
+For the next bounded operator / bounded micro-live run, add these operator watchpoints:
+
+- monitor for any new Spot/Testnet payload fields that appear in persisted artifacts but are not yet consumed
+- monitor for any reconnect / heartbeat churn that stops being explainable
+- monitor for repeated request-weight, order-count, or timeout signals
+- monitor for any unknown execution state that does not converge automatically
 
 ## Latest Soak Evidence Review
 

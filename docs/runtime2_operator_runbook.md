@@ -47,6 +47,21 @@ Operator meaning:
 - use the same lineage/session model for the next bounded operator / bounded micro-live stage
 - keep fail-closed safeguards, stale-output protection, and scheduler late-start abort behavior unchanged
 
+## Binance Live Checklist v1
+
+Use this checklist before the next bounded operator / bounded micro-live run.
+
+- confirm the run is still Spot testnet and still `restricted_live_rehearsal`
+- confirm `runtime_session.json`, `scheduler_manifest.json`, and per-window `action_driver_result.json` are expected review artifacts
+- confirm no operator is relying on deprecated REST `listenKey` bootstrap assumptions
+- confirm the intended private bootstrap path is still the subscribe-based Spot WebSocket API UDS path
+- confirm `executionReport` optional metadata such as `expiryReason` / `eR` remains treated as tolerated input, not as a new live decision input
+- confirm newer exchange metadata such as `executionRules`, `referencePrice`, `permissionSets`, `amendAllowed`, `quoteOrderQtyMarketAllowed`, STP-related fields, `MAX_ASSET`, and `myFilters` are being treated as watchpoints or future hardening items, not as reasons to improvise logic changes immediately before the run
+- confirm unknown execution recovery remains inspectable and fail-closed
+- confirm reconnect / heartbeat churn remains an explicit watchpoint
+- confirm request-weight, order-count, and timeout uncertainty remain explicit watchpoints during the run
+- confirm Demo Mode is not being conflated with the current bounded run; it is a later test-ladder stage, not a prerequisite for this run
+
 ## 1. Before Any Binance Rehearsal
 
 Complete these checks in order.
@@ -125,6 +140,17 @@ For the next bounded operator / bounded micro-live stage, continue to require:
 - `scheduler_manifest.json` and `scheduler_events.jsonl` for scheduler lineage review
 - `action_driver_result.json` for each planned action window
 - no manual timestamp copying between terminals
+
+Binance-specific watchpoints for the bounded run:
+
+- any unexpected `executionRules` or `referencePrice` payload change showing up in artifacts
+- any operator-visible `expiryReason` / `eR` drift from the already tolerated shape
+- any sign of deprecated REST `listenKey` assumptions reappearing instead of the subscribed UDS path
+- any unexpected field-family expansion around `permissionSets`, `amendAllowed`, `quoteOrderQtyMarketAllowed`, or STP-related metadata
+- any unexplained `MAX_ASSET` or `myFilters` constraint surfacing in operator-visible errors
+- any unknown execution alert that does not converge cleanly
+- any reconnect or heartbeat degradation that becomes unexplained
+- any request-weight, order-count, or timeout pattern that becomes session-shaping instead of incidental
 
 ## 3. Pre-Launch Signed Auth-Check Procedure
 
@@ -219,6 +245,8 @@ For the next bounded operator / bounded micro-live stage, also stop immediately 
 - scheduler fails before intended bounded windows complete
 - stale-output fail-if-exists protection triggers on a supposedly fresh run
 - blocked mutation becomes non-zero
+- reconnect / heartbeat churn becomes unexplained
+- request-weight, order-count, or timeout errors repeat without a documented explanation
 
 ## 5. Graceful External Stop Convention
 
