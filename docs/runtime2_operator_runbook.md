@@ -47,6 +47,28 @@ Operator meaning:
 - use the same lineage/session model for the next bounded operator / bounded micro-live stage
 - keep fail-closed safeguards, stale-output protection, and scheduler late-start abort behavior unchanged
 
+Current bounded-stage summary:
+
+- `binance-bounded-preflight-r1-30m`: `PASS WITH CAUTION`
+- `binance-bounded-r1-4h`: `PASS WITH CAUTION`
+- `binance-bounded-r2-4h`: `PASS WITH CAUTION`
+- `binance-bounded-r3-4h`: `PASS WITH CAUTION`
+- `binance-bounded-r4-8h`: `PASS WITH CAUTION`
+- `binance-bounded-r5-8h`: `FAIL`
+- `binance-envcheck-r0-1h`: `ENV-CHECK PASS WITH CAUTION`
+
+Known caution classes carried into the current stage:
+
+- `PERCENT_PRICE_BY_SIDE` causing `PARTIAL_SUCCESS_NONBLOCKING`
+- reconnect / heartbeat churn
+
+Known bounded-stage incident:
+
+- `binance-bounded-r5-8h` recorded `window_aborted_late` for `a2`
+- `a3` did not run
+- final runtime artifact set was missing
+- current retained evidence is most consistent with an interruption class affecting the environment or session continuity
+
 ## Binance Live Checklist v1
 
 Use this checklist before the next bounded operator / bounded micro-live run.
@@ -71,6 +93,75 @@ Complete these checks in order.
 3. Confirm testnet credentials are loaded for testnet rehearsal.
 4. Confirm `reports/` and `logs/` are writable.
 5. Confirm the target run is still rehearsal-only and not unrestricted live trading.
+
+## Credential Handling Standard
+
+Use this standard for all future bounded operator runs.
+
+- start from a fresh shell
+- prefer the hidden-prompt WSL preflight path:
+  - [`scripts/preflight_broader_rehearsal_wsl.sh`](/home/terratunes/code/trading/runtime2/scripts/preflight_broader_rehearsal_wsl.sh)
+  - [`scripts/preflight_wsl.sh`](/home/terratunes/code/trading/runtime2/scripts/preflight_wsl.sh)
+- if both `BINANCE_API_KEY` and `BINANCE_API_SECRET` are already present in the current shell, the preflight scripts should skip prompting and continue
+- enter both `BINANCE_API_KEY` and `BINANCE_API_SECRET` through hidden prompts only
+- do not run inline credential-bearing commands such as:
+  - `BINANCE_API_KEY=... BINANCE_API_SECRET=... bash ...`
+  - `env BINANCE_API_KEY=... BINANCE_API_SECRET=... python ...`
+- do not share terminal output, pane capture, or screen recording while entering credentials
+- unset credentials after the run completes:
+  - `unset BINANCE_API_KEY BINANCE_API_SECRET`
+
+Operator meaning:
+
+- current-shell export behavior remains the supported compatibility path for the existing wrappers
+- the safety change is only in how credentials are entered, not in how runtime or scheduler commands consume them
+
+## Host Power And Sleep Discipline
+
+For bounded runs longer than `4h`:
+
+- use stable AC power
+- disable sleep
+- disable hibernate
+- disable lid-close sleep behavior if applicable
+- avoid leaving the run on a host that may suspend WSL, tmux, or the terminal session
+
+Operator meaning:
+
+- interruption-class failures invalidate bounded-run evidence
+- host/session continuity is part of the operator responsibility for long runs
+
+## Fail-Closed Interruption Policy
+
+Treat the following as fail-closed conditions:
+
+- `window_aborted_late`
+- missing final runtime artifact set
+- missing planned action-window artifacts for a normal bounded run
+- interrupted scheduler lineage
+- incomplete final runtime summary
+
+Operator rules:
+
+- do not resume interrupted runs
+- do not manually run later windows under the same interrupted run id
+- do not reconstruct missing artifacts by hand
+- retain the incomplete artifact set for review
+
+## Fresh Run-Id Requirement After Interruption
+
+After any interrupted or incomplete run:
+
+- use a fresh run id
+- do not reuse the interrupted run id
+
+Examples:
+
+- invalid:
+  - reuse `binance-bounded-r5-8h`
+- valid:
+  - `binance-bounded-r6-8h`
+  - `binance-envcheck-r1-1h`
 
 ## 2. Canonical Entrypoints
 
