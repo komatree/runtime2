@@ -24,10 +24,21 @@ The goal is not broad live execution. The goal is to produce a reviewable eviden
 
 ## Credential / Testnet Prechecks
 
-1. Confirm the shell has plausible credentials:
+1. Load credentials into a fresh shell through a hidden prompt path.
+
+Use the WSL preflight helper and avoid inline credential-bearing commands.
 
 ```bash
-env BINANCE_API_KEY='your_real_testnet_key' BINANCE_API_SECRET='your_real_testnet_secret' \
+source scripts/preflight_broader_rehearsal_wsl.sh
+```
+
+Do not use inline commands such as:
+- `env BINANCE_API_KEY=... BINANCE_API_SECRET=... python ...`
+- `BINANCE_API_KEY=... BINANCE_API_SECRET=... bash ...`
+
+2. Confirm the shell has plausible credentials:
+
+```bash
 python scripts/check_binance_testnet_credentials.py \
   --config configs/runtime2_restricted_live_testnet.toml
 ```
@@ -36,10 +47,9 @@ Required interpretation:
 - status must be locally plausible
 - do not proceed if the helper reports missing env vars, placeholder-like values, or invalid apiKey shape
 
-2. Confirm signed-path acceptance on current Spot testnet:
+3. Confirm signed-path acceptance on current Spot testnet:
 
 ```bash
-env BINANCE_API_KEY='your_real_testnet_key' BINANCE_API_SECRET='your_real_testnet_secret' \
 python scripts/verify_binance_signed_paths_testnet.py \
   --config configs/runtime2_restricted_live_testnet.toml \
   --allow-live-testnet \
@@ -56,7 +66,6 @@ Required interpretation:
 Use a bounded run that keeps the rehearsal small and reviewable.
 
 ```bash
-env BINANCE_API_KEY='your_real_testnet_key' BINANCE_API_SECRET='your_real_testnet_secret' \
 python scripts/run_runtime2_testnet_event_exercise.py \
   --config configs/runtime2_restricted_live_testnet.toml \
   --execution-data data/binance \
@@ -86,7 +95,6 @@ Run the automated action driver during the bounded rehearsal window.
 Mandatory core flow:
 
 ```bash
-env BINANCE_API_KEY='your_real_testnet_key' BINANCE_API_SECRET='your_real_testnet_secret' \
 python scripts/run_testnet_event_action_driver.py \
   --run-id binance-testnet-active-private-driver-1 \
   --config configs/runtime2_restricted_live_testnet.toml \
@@ -97,7 +105,6 @@ python scripts/run_testnet_event_action_driver.py \
 Optional fill attempt:
 
 ```bash
-env BINANCE_API_KEY='your_real_testnet_key' BINANCE_API_SECRET='your_real_testnet_secret' \
 python scripts/run_testnet_event_action_driver.py \
   --run-id binance-testnet-active-private-driver-1 \
   --config configs/runtime2_restricted_live_testnet.toml \
@@ -210,10 +217,13 @@ Do not call it a runtime defect from console output alone. Use the persisted art
 
 ## Checklist
 
-1. Run credential sanity check.
-2. Run signed-path live verification.
-3. Start bounded runtime rehearsal.
-4. Run the testnet event action driver during the rehearsal window.
-5. Preserve both action-driver and runtime artifact paths.
-6. Review the combined artifact set.
-7. Only then classify the run as proven, partially proven, or not proven.
+1. Load credentials through the hidden preflight helper.
+2. Run credential sanity check.
+3. Run signed-path live verification.
+4. Start bounded runtime rehearsal.
+5. Run the testnet event action driver during the rehearsal window.
+6. Preserve both action-driver and runtime artifact paths.
+7. Unset credentials after the bounded run completes:
+   - `unset BINANCE_API_KEY BINANCE_API_SECRET`
+8. Review the combined artifact set.
+9. Only then classify the run as proven, partially proven, or not proven.

@@ -11,6 +11,12 @@
   - `action_driver_events.jsonl`
   - `action_driver_summary.md`
 
+Credential handling:
+
+- load credentials into the current shell through the hidden-prompt WSL preflight helpers
+- do not place raw credentials directly into inline shell commands shown in terminal output
+- unset `BINANCE_API_KEY` and `BINANCE_API_SECRET` after the run
+
 The mandatory core flow is:
 
 1. place one small resting `LIMIT BUY` order intended to create an acknowledgement event
@@ -39,7 +45,6 @@ It does not replace the runtime2 rehearsal path. It only makes the event-generat
 Run the action driver first:
 
 ```bash
-env BINANCE_API_KEY='your_real_testnet_key' BINANCE_API_SECRET='your_real_testnet_secret' \
 python scripts/run_testnet_event_action_driver.py \
   --run-id binance-testnet-active-private-driver-1 \
   --config configs/runtime2_restricted_live_testnet.toml \
@@ -50,7 +55,6 @@ python scripts/run_testnet_event_action_driver.py \
 Optional fill attempt:
 
 ```bash
-env BINANCE_API_KEY='your_real_testnet_key' BINANCE_API_SECRET='your_real_testnet_secret' \
 python scripts/run_testnet_event_action_driver.py \
   --run-id binance-testnet-active-private-driver-1 \
   --config configs/runtime2_restricted_live_testnet.toml \
@@ -62,7 +66,6 @@ python scripts/run_testnet_event_action_driver.py \
 Then run the existing bounded runtime rehearsal with the same `run_id` family:
 
 ```bash
-env BINANCE_API_KEY='your_real_testnet_key' BINANCE_API_SECRET='your_real_testnet_secret' \
 python scripts/run_runtime2_testnet_event_exercise.py \
   --config configs/runtime2_restricted_live_testnet.toml \
   --execution-data data/binance \

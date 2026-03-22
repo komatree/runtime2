@@ -21,6 +21,9 @@ Read together with:
 
 This checklist is for the next bounded operator / bounded micro-live run only.
 
+- start from a fresh shell and load credentials through hidden prompt entry
+- keep current-shell export behavior for the existing wrappers, but do not use inline credential-bearing commands
+- avoid shared terminal capture during credential entry and unset credentials after the run
 - keep the current broader `r5` baseline as the authoritative proof set
 - keep the same runtime/session lineage model used in `r5`
 - keep stale-output fail-if-exists behavior unchanged
