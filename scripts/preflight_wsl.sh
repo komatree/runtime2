@@ -1,12 +1,30 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+_preflight_success_return_or_exit() {
+  if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+  fi
+  exit 0
+}
+
 echo "=================================================="
 echo "Binance Testnet Credentials Input"
 echo "=================================================="
+echo "Security policy:"
+echo "- enter both Binance credentials through hidden prompts only"
+echo "- do not paste credentials into inline shell commands"
+echo "- avoid shared terminal capture while entering credentials"
+echo
 
-# 1) API Key 입력
-read -rp "Enter BINANCE_API_KEY: " INPUT_API_KEY
+if [[ -n "${BINANCE_API_KEY:-}" && -n "${BINANCE_API_SECRET:-}" ]]; then
+  echo "Credentials already present in current shell; skipping hidden prompts."
+  _preflight_success_return_or_exit
+fi
+
+# 1) API Key 입력 (입력값 숨김)
+read -rsp "Enter BINANCE_API_KEY (hidden): " INPUT_API_KEY
+echo
 if [[ -z "${INPUT_API_KEY:-}" ]]; then
   echo "ERROR: BINANCE_API_KEY is empty"
   exit 1
@@ -22,9 +40,8 @@ fi
 
 # 3) 요약 확인
 echo "=================================================="
-echo "You entered:"
-echo "  BINANCE_API_KEY    : ${INPUT_API_KEY:0:8}********"
-echo "  BINANCE_API_SECRET : ******** (hidden)"
+echo "Credentials were captured through hidden prompts."
+echo "No raw values or visible prefixes will be printed."
 read -rp "Use these credentials? [y/N]: " CONFIRM
 CONFIRM=${CONFIRM:-N}
 
@@ -36,6 +53,7 @@ fi
 # 4) 현재 셸 환경변수로 설정
 export BINANCE_API_KEY="$INPUT_API_KEY"
 export BINANCE_API_SECRET="$INPUT_API_SECRET"
+echo "Credentials exported to the current shell for this session only."
 
 # ---------------------------------------------------
 # 여기부터 기존 preflight 로직
