@@ -150,7 +150,7 @@ python scripts/binance_restricted_live_soak.py \
   --confirm-no-order-submission
 EOF
 )
-  tmux new-session -d -s "$RUNTIME_SESSION_NAME" "$cmd"
+  tmux new-session -d -s "$RUNTIME_SESSION_NAME" bash -lc "$cmd"
 }
 
 launch_scheduler() {
@@ -168,7 +168,7 @@ python scripts/run_broader_action_windows.py \
   --modes $MODES
 EOF
 )
-  tmux new-session -d -s "$SCHEDULER_SESSION_NAME" "$cmd"
+  tmux new-session -d -s "$SCHEDULER_SESSION_NAME" bash -lc "$cmd"
 }
 
 print_launch_summary() {
