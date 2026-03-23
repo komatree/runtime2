@@ -91,8 +91,21 @@ Complete these checks in order.
 1. Complete the operating-PC checklist in [`docs/runtime2_operating_pc_checklist.md`](/home/terratunes/code/trading/runtime2/docs/runtime2_operating_pc_checklist.md).
 2. Confirm the intended config file matches the intended environment.
 3. Confirm testnet credentials are loaded for testnet rehearsal.
-4. Confirm `reports/` and `logs/` are writable.
-5. Confirm the target run is still rehearsal-only and not unrestricted live trading.
+4. Confirm local runtime data files under `data/binance/` are present and readable.
+5. Confirm the approved config-referenced files exist on this host.
+   - current concrete examples:
+     - `data/binance/btcusdt_4h.json`
+     - `data/binance/btcusdt_1d.json`
+6. Confirm `reports/` and `logs/` are writable.
+7. Confirm the target run is still rehearsal-only and not unrestricted live trading.
+
+Quick data checks:
+
+```bash
+ls -l data/binance
+test -f data/binance/btcusdt_4h.json
+test -f data/binance/btcusdt_1d.json
+```
 
 ## Credential Handling Standard
 
@@ -115,6 +128,42 @@ Operator meaning:
 
 - current-shell export behavior remains the supported compatibility path for the existing wrappers
 - the safety change is only in how credentials are entered, not in how runtime or scheduler commands consume them
+
+## Runtime Data Bundle Requirement
+
+`runtime2` bounded execution requires local runtime data files under `data/binance/`.
+
+- code arrives by Git
+- credentials are injected locally
+- runtime data bundle must be transferred separately to the Operations PC
+
+Current concrete file examples:
+
+- `data/binance/btcusdt_4h.json`
+- `data/binance/btcusdt_1d.json`
+
+Warning:
+
+- missing runtime data files can cause early runtime failure before the normal bounded artifact set appears
+- this may look like a silent or near-silent launch failure if the operator only checks later for `runtime_session.json`
+
+Confirmed failure shape:
+
+- `FileNotFoundError: data/binance/btcusdt_4h.json`
+
+Remediation:
+
+1. Re-transfer the approved runtime data bundle.
+2. Re-check required files:
+
+```bash
+ls -l data/binance
+test -f data/binance/btcusdt_4h.json
+test -f data/binance/btcusdt_1d.json
+```
+
+3. Run a direct runtime smoke with a fresh `run_id`.
+4. Only after that succeeds, launch the bounded wrapper run.
 
 ## Host Power And Sleep Discipline
 

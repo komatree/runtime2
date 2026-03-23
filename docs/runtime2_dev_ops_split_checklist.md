@@ -24,6 +24,10 @@ Read together with:
 - confirm current bounded operator stage is documented
 - confirm the intended classification standard is documented
 - commit and push code and docs only
+- build the required runtime data bundle for the approved config
+- decide whether the transfer is:
+  - minimal bundle: only config-referenced files
+  - full bundle: full `data/binance/`
 - do not commit:
   - `reports/`
   - `logs/`
@@ -50,6 +54,16 @@ bash -n scripts/preflight_broader_rehearsal_wsl.sh \
   scripts/run_broader_rehearsal_6h_wsl.sh \
   scripts/run_broader_rehearsal_smoke30_wsl.sh
 ```
+
+- verify runtime data files exist on Operations PC before any launch:
+
+```bash
+ls -l data/binance
+test -f data/binance/btcusdt_4h.json
+test -f data/binance/btcusdt_1d.json
+```
+
+- verify the approved config-referenced files exist on this host before the run
 
 ## Credential Handling
 
@@ -85,9 +99,33 @@ python scripts/check_binance_testnet_credentials.py
 python scripts/verify_binance_signed_paths_testnet.py
 ```
 
-5. Launch the approved bounded wrapper or runtime/scheduler pair.
-6. Run post-run verify/check helper.
-7. Collect short operator notes.
+5. Verify the runtime data bundle is present and readable before wrapper launch.
+6. Run a direct runtime smoke before wrapper launch when bringing up a new Operations PC or after re-transferring the data bundle.
+7. Launch the approved bounded wrapper or runtime/scheduler pair.
+8. Run post-run verify/check helper.
+9. Collect short operator notes.
+
+### Direct Runtime Smoke Example
+
+This check should fail fast if `data/binance/*.json` is missing:
+
+```bash
+python scripts/binance_restricted_live_soak.py \
+  --config configs/runtime2_restricted_live_testnet.toml \
+  --execution-data data/binance \
+  --context-data data/binance \
+  --reports-dir reports \
+  --logs-dir logs \
+  --exchange-mode restricted_live_rehearsal \
+  --run-id devops-datasmoke-r1 \
+  --cycles 1 \
+  --poll-interval-seconds 30 \
+  --output-subdir soak_sessions \
+  --max-blocked-mutations 3 \
+  --confirm-rehearsal-only \
+  --allow-restricted-live-rehearsal \
+  --confirm-no-order-submission
+```
 
 ## Artifacts To Sync Back
 
@@ -109,3 +147,4 @@ Sync back:
 - machine-local temp data
 - raw terminal captures containing credential entry
 - `logs/` unless specifically requested for an investigation
+- `data/binance/` as part of routine backward artifact review

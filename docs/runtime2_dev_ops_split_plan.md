@@ -62,6 +62,76 @@ Move from Operations PC back to Development PC as artifact bundles:
 Optional if retained:
 - wrapper watch outputs or local operator notes that do not contain secrets
 
+## Required Runtime Data Bundle
+
+- `runtime2` execution on Operations PC also requires local runtime data files under `data/binance/`.
+- These files are not supplied by Git checkout alone and are not created by credential injection.
+- Missing files cause early runtime failure at preflight or load time.
+  - confirmed failure example:
+    - `FileNotFoundError: data/binance/btcusdt_4h.json`
+- Treat the split inputs as three separate classes:
+  - code: Git
+  - credentials: local manual injection on Operations PC
+  - runtime data bundle: file transfer from Development PC to Operations PC
+
+### Why The Data Bundle Is Required
+
+- The active runtime entrypoints are launched with:
+  - `--execution-data data/binance`
+  - `--context-data data/binance`
+- The approved testnet config references local kline/context files by name.
+- Current concrete examples:
+  - `data/binance/btcusdt_4h.json`
+  - `data/binance/btcusdt_1d.json`
+- If those files are absent on Operations PC, the runtime can stop before normal bounded artifacts are produced.
+
+### Minimal vs Full Transfer Strategy
+
+- Minimal runtime data bundle:
+  - transfer only the files referenced by the approved config for the run
+  - current concrete minimum for `configs/runtime2_restricted_live_testnet.toml`:
+    - `data/binance/btcusdt_4h.json`
+    - `data/binance/btcusdt_1d.json`
+- Full runtime data bundle:
+  - transfer the full `data/binance/` directory
+  - use this when the Operations PC should be able to run the same approved configs without another file sync
+
+### Example Data Bundle Commands
+
+- Create a minimal bundle on Development PC:
+
+```bash
+tar -czf runtime2-data-binance-minimal.tgz \
+  data/binance/btcusdt_4h.json \
+  data/binance/btcusdt_1d.json
+```
+
+- Create a full bundle on Development PC:
+
+```bash
+tar -czf runtime2-data-binance-full.tgz data/binance
+```
+
+- Transfer to Operations PC:
+
+```bash
+scp runtime2-data-binance-minimal.tgz ops-pc:~/runtime2/
+```
+
+- Unpack on Operations PC from repo root:
+
+```bash
+tar -xzf ~/runtime2/runtime2-data-binance-minimal.tgz
+```
+
+- Verify on Operations PC:
+
+```bash
+ls -l data/binance
+test -f data/binance/btcusdt_4h.json
+test -f data/binance/btcusdt_1d.json
+```
+
 ## What Must Never Move
 
 Must never move between PCs:
