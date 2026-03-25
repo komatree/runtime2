@@ -197,6 +197,15 @@ Operator rules:
 - do not reconstruct missing artifacts by hand
 - retain the incomplete artifact set for review
 
+If the final runtime artifact family is missing, inspect:
+
+- `reports/soak_sessions/<run_id>/finalization_debug.json`
+
+Operator meaning:
+
+- if that file records a failed finalization phase, classify the run from retained evidence and captured exception details
+- if that file is also absent, treat the run as a stronger interruption or abrupt-process-end candidate
+
 ## Fresh Run-Id Requirement After Interruption
 
 After any interrupted or incomplete run:

@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sys
+import traceback
 from dataclasses import replace
 from datetime import UTC
 from datetime import datetime
@@ -49,6 +50,7 @@ from scripts.runtime2_rehearsal import prepare_runtime_rehearsal
 
 
 SOAK_ABORT_EXIT_CODE = 2
+FINALIZATION_DEBUG_FILENAME = "finalization_debug.json"
 
 
 def _venue_symbol(instrument_id: str) -> str:
@@ -85,6 +87,50 @@ def _write_runtime_session_metadata(
         ),
         encoding="utf-8",
     )
+
+
+def _finalization_debug_path(run_dir: Path) -> Path:
+    return run_dir / FINALIZATION_DEBUG_FILENAME
+
+
+def _write_finalization_debug_marker(
+    *,
+    run_dir: Path,
+    phase: str,
+    status: str,
+    exception: BaseException | None = None,
+    extra: dict[str, object] | None = None,
+) -> Path:
+    path = _finalization_debug_path(run_dir)
+    payload: dict[str, object] = {
+        "recorded_at": datetime.now(UTC).isoformat(),
+        "phase": phase,
+        "status": status,
+    }
+    if extra:
+        payload.update(extra)
+    if exception is not None:
+        payload["exception_type"] = type(exception).__name__
+        payload["exception_message"] = str(exception)
+        payload["traceback"] = "".join(
+            traceback.format_exception(type(exception), exception, exception.__traceback__)
+        )
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _report_finalization_exception(*, phase: str, debug_path: Path, exception: BaseException) -> None:
+    print(
+        (
+            "restricted-live soak finalization failure: "
+            f"phase={phase} debug_marker={debug_path}"
+        ),
+        file=sys.stderr,
+    )
+    traceback.print_exception(type(exception), exception, exception.__traceback__, file=sys.stderr)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -247,32 +293,125 @@ def main(argv: list[str] | None = None) -> int:
         live_portfolio_mutation_gate=gate,
         exchange_health_provider=exchange_health_provider,
     )
-    run = RestrictedLiveSoakRunner(
-        runner=RestrictedLiveRunner(soak_context),
-        recording_gate=gate,
-        exchange_health_provider=exchange_health_provider,
-        payload_source=payload_source,
-    ).run(
-        criteria=RestrictedLiveSoakStopCriteria(
-            max_cycles=args.cycles,
-            max_duration=(
-                timedelta(hours=args.duration_hours)
-                if args.duration_hours is not None
-                else None
-            ),
-            poll_interval_seconds=args.poll_interval_seconds,
-            max_blocked_mutations=args.max_blocked_mutations,
-        ),
-        cycle_id_prefix=prepared.launch_config.cycle_id,
-        instrument=prepared.instrument,
-        bar_slice=prepared.market_context.execution_bar_slice,
-        context_bar_slice=prepared.market_context.context_bar_slice,
-        portfolio_state=portfolio_state,
+    _write_finalization_debug_marker(
+        run_dir=run_dir,
+        phase="soak_runner.run",
+        status="started",
     )
+    try:
+        run = RestrictedLiveSoakRunner(
+            runner=RestrictedLiveRunner(soak_context),
+            recording_gate=gate,
+            exchange_health_provider=exchange_health_provider,
+            payload_source=payload_source,
+        ).run(
+            criteria=RestrictedLiveSoakStopCriteria(
+                max_cycles=args.cycles,
+                max_duration=(
+                    timedelta(hours=args.duration_hours)
+                    if args.duration_hours is not None
+                    else None
+                ),
+                poll_interval_seconds=args.poll_interval_seconds,
+                max_blocked_mutations=args.max_blocked_mutations,
+            ),
+            cycle_id_prefix=prepared.launch_config.cycle_id,
+            instrument=prepared.instrument,
+            bar_slice=prepared.market_context.execution_bar_slice,
+            context_bar_slice=prepared.market_context.context_bar_slice,
+            portfolio_state=portfolio_state,
+        )
+    except Exception as exc:
+        debug_path = _write_finalization_debug_marker(
+            run_dir=run_dir,
+            phase="soak_runner.run",
+            status="failed",
+            exception=exc,
+        )
+        _report_finalization_exception(
+            phase="soak_runner.run",
+            debug_path=debug_path,
+            exception=exc,
+        )
+        return 1
+
+    _write_finalization_debug_marker(
+        run_dir=run_dir,
+        phase="render_markdown",
+        status="started",
+        extra={
+            "completed_cycles": run.summary.completed_cycles,
+            "stop_reason": run.summary.stop_reason,
+            "aborted": run.summary.aborted,
+        },
+    )
+    try:
+        markdown = RestrictedLiveSoakReportingService().render_markdown(run=run)
+    except Exception as exc:
+        debug_path = _write_finalization_debug_marker(
+            run_dir=run_dir,
+            phase="render_markdown",
+            status="failed",
+            exception=exc,
+            extra={
+                "completed_cycles": run.summary.completed_cycles,
+                "stop_reason": run.summary.stop_reason,
+                "aborted": run.summary.aborted,
+            },
+        )
+        _report_finalization_exception(
+            phase="render_markdown",
+            debug_path=debug_path,
+            exception=exc,
+        )
+        return 1
+
     writer = RestrictedLiveSoakArtifactWriter(output_dir=run_dir)
-    artifact_paths = writer.persist(
-        run=run,
-        markdown=RestrictedLiveSoakReportingService().render_markdown(run=run),
+    _write_finalization_debug_marker(
+        run_dir=run_dir,
+        phase="artifact_writer.persist",
+        status="started",
+        extra={
+            "completed_cycles": run.summary.completed_cycles,
+            "stop_reason": run.summary.stop_reason,
+            "aborted": run.summary.aborted,
+        },
+    )
+    try:
+        artifact_paths = writer.persist(
+            run=run,
+            markdown=markdown,
+        )
+    except Exception as exc:
+        debug_path = _write_finalization_debug_marker(
+            run_dir=run_dir,
+            phase="artifact_writer.persist",
+            status="failed",
+            exception=exc,
+            extra={
+                "completed_cycles": run.summary.completed_cycles,
+                "stop_reason": run.summary.stop_reason,
+                "aborted": run.summary.aborted,
+            },
+        )
+        _report_finalization_exception(
+            phase="artifact_writer.persist",
+            debug_path=debug_path,
+            exception=exc,
+        )
+        return 1
+
+    debug_path = _write_finalization_debug_marker(
+        run_dir=run_dir,
+        phase="artifact_writer.persist",
+        status="completed",
+        extra={
+            "completed_cycles": run.summary.completed_cycles,
+            "stop_reason": run.summary.stop_reason,
+            "aborted": run.summary.aborted,
+            "summary_json_path": str(artifact_paths.summary_json_path),
+            "summary_markdown_path": str(artifact_paths.summary_markdown_path),
+        },
     )
     print(f"soak_summary_json: {artifact_paths.summary_json_path}")
     print(f"soak_summary_markdown: {artifact_paths.summary_markdown_path}")
@@ -280,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"reconnect_events_jsonl: {artifact_paths.reconnect_events_path}")
     print(f"listen_key_refresh_jsonl: {artifact_paths.listen_key_refresh_path}")
     print(f"reconciliation_events_jsonl: {artifact_paths.reconciliation_events_path}")
+    print(f"finalization_debug_json: {debug_path}")
     print(f"stop_reason: {run.summary.stop_reason}")
     print(f"completed_cycles: {run.summary.completed_cycles}")
     return 0 if not run.summary.aborted else SOAK_ABORT_EXIT_CODE

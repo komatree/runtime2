@@ -126,6 +126,12 @@ Final soak artifacts:
   - `soak_summary.json`
   - `soak_summary.md`
 
+Finalization debug marker:
+- `finalization_debug.json`
+- written in the runtime run directory during post-run finalization
+- records the last finalization phase reached and any captured exception details
+- inspect it when the final soak artifact family is missing
+
 Reference:
 - [`scripts/binance_restricted_live_soak.py`](/home/terratunes/code/trading/runtime2/scripts/binance_restricted_live_soak.py)
 - [`app/monitoring/restricted_live_soak.py`](/home/terratunes/code/trading/runtime2/app/monitoring/restricted_live_soak.py)
