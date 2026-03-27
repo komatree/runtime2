@@ -27,6 +27,8 @@ from .models import BinanceRecoveryPlan
 from .models import BinanceRecoveryTriggerReason
 from .models import BinanceStatusQueryHealth
 
+_TERMINAL_LOOKUP_STATUSES = frozenset({"filled", "cancelled", "rejected", "expired"})
+
 
 class BinanceReconciliationStateStore(Protocol):
     """Persistent state boundary for replay-safe reconciliation recovery."""
@@ -86,6 +88,52 @@ class BinanceReconciliationService:
 
     max_automatic_recovery_rounds: int = 3
 
+    def _build_unknown_execution_fallbacks(
+        self,
+        *,
+        expected_order_ids: tuple[str, ...],
+        private_events: tuple[BinancePrivateStreamEvent, ...],
+    ) -> dict[str, str]:
+        """Return client-order-id to exchange-order-id fallbacks for UNKNOWN executions."""
+
+        fallback_by_client_order_id: dict[str, str] = {}
+        for event in private_events:
+            if (
+                event.sequence_id
+                and event.sequence_id not in expected_order_ids
+                and event.client_order_id
+                and event.exchange_order_id
+            ):
+                fallback_by_client_order_id.setdefault(
+                    event.client_order_id,
+                    event.exchange_order_id,
+                )
+        return fallback_by_client_order_id
+
+    def _should_use_unknown_execution_fallback(
+        self,
+        *,
+        lookup: BinanceOrderLookupResult,
+        health: BinanceStatusQueryHealth | None,
+    ) -> bool:
+        """Return whether UNKNOWN recovery should switch from client-id to exchange-id lookup."""
+
+        if lookup.found and lookup.status_summary in _TERMINAL_LOOKUP_STATUSES:
+            return False
+        if health is not None and health.http_status is not None and 400 <= health.http_status < 500:
+            return True
+        if lookup.alert is None:
+            return not lookup.found or lookup.status_summary not in _TERMINAL_LOOKUP_STATUSES
+        lowered_alert = lookup.alert.lower()
+        return (
+            "http error 4" in lowered_alert
+            or "bad request" in lowered_alert
+            or "does not exist" in lowered_alert
+            or "not found" in lowered_alert
+            or not lookup.found
+            or lookup.status_summary not in _TERMINAL_LOOKUP_STATUSES
+        )
+
     def reconcile(
         self,
         *,
@@ -99,6 +147,28 @@ class BinanceReconciliationService:
             event.sequence_id
             for event in private_events
             if event.sequence_id and event.sequence_id not in expected_order_ids
+        )
+        unknown_execution_client_order_ids = tuple(
+            dict.fromkeys(
+                event.client_order_id
+                for event in private_events
+                if (
+                    event.sequence_id
+                    and event.sequence_id not in expected_order_ids
+                    and event.client_order_id
+                )
+            )
+        )
+        unknown_execution_exchange_only_ids = tuple(
+            dict.fromkeys(
+                event.sequence_id
+                for event in private_events
+                if (
+                    event.sequence_id
+                    and event.sequence_id not in expected_order_ids
+                    and not event.client_order_id
+                )
+            )
         )
         matched = tuple(order_id for order_id in expected_order_ids if order_id in seen_ids)
         missing = tuple(order_id for order_id in expected_order_ids if order_id not in seen_ids)
@@ -126,6 +196,8 @@ class BinanceReconciliationService:
             matched_order_ids=matched,
             missing_order_ids=missing,
             unknown_execution_ids=unknown_execution_ids,
+            unknown_execution_client_order_ids=unknown_execution_client_order_ids,
+            unknown_execution_exchange_only_ids=unknown_execution_exchange_only_ids,
             alerts=tuple(alerts),
             recovery_actions=tuple(recovery_actions),
         )
@@ -172,8 +244,15 @@ class BinanceReconciliationService:
         """Build an explicit automatic recovery plan when gap or unresolved state is active."""
 
         lookup_requests: list[tuple[str, str]] = []
-        for order_id in (*result.missing_order_ids, *result.unknown_execution_ids):
+        for order_id in result.missing_order_ids:
             request = ("exchange_order_id", order_id)
+            if request not in lookup_requests:
+                lookup_requests.append(request)
+        unknown_lookup_values = (
+            *(("client_order_id", order_id) for order_id in result.unknown_execution_client_order_ids),
+            *(("exchange_order_id", order_id) for order_id in result.unknown_execution_exchange_only_ids),
+        )
+        for request in unknown_lookup_values:
             if request not in lookup_requests:
                 lookup_requests.append(request)
 
@@ -277,29 +356,63 @@ class BinanceReconciliationService:
         lookup_results: list[BinanceOrderLookupResult] = []
         status_query_health: list[BinanceStatusQueryHealth] = []
         max_rounds = self.max_automatic_recovery_rounds if recovery_plan.automatic_triggered else 1
-        terminal_statuses = {"filled", "cancelled", "rejected", "expired"}
+        unknown_execution_fallbacks = self._build_unknown_execution_fallbacks(
+            expected_order_ids=resumed_expected_order_ids,
+            private_events=private_events,
+        )
+        switched_unknown_lookup_values: dict[str, str] = {}
         latest_by_lookup_value: dict[str, BinanceOrderLookupResult] = {}
         for _round in range(max_rounds):
             for lookup_field, lookup_value in recovery_plan.order_lookup_requests:
-                if lookup_field == "client_order_id":
+                effective_lookup_field = lookup_field
+                effective_lookup_value = switched_unknown_lookup_values.get(lookup_value, lookup_value)
+                if lookup_field == "client_order_id" and effective_lookup_value != lookup_value:
+                    effective_lookup_field = "exchange_order_id"
+
+                round_health: list[BinanceStatusQueryHealth] = []
+                if effective_lookup_field == "client_order_id":
                     lookup = order_client.lookup_order_by_client_id(
-                        lookup_value,
+                        effective_lookup_value,
                         transport=lookup_transport,
                     )
                 else:
                     lookup = order_client.lookup_order_by_exchange_id(
-                        lookup_value,
+                        effective_lookup_value,
                         transport=lookup_transport,
                     )
-                lookup_results.append(lookup)
-                latest_by_lookup_value[lookup.lookup_value] = lookup
                 health = lookup_transport.last_health()
                 if health is not None:
-                    status_query_health.append(health)
+                    round_health.append(health)
+
+                fallback_exchange_order_id = (
+                    unknown_execution_fallbacks.get(lookup_value)
+                    if lookup_field == "client_order_id"
+                    else None
+                )
+                if (
+                    fallback_exchange_order_id is not None
+                    and effective_lookup_field == "client_order_id"
+                    and self._should_use_unknown_execution_fallback(
+                        lookup=lookup,
+                        health=health,
+                    )
+                ):
+                    switched_unknown_lookup_values[lookup_value] = fallback_exchange_order_id
+                    lookup = order_client.lookup_order_by_exchange_id(
+                        fallback_exchange_order_id,
+                        transport=lookup_transport,
+                    )
+                    health = lookup_transport.last_health()
+                    if health is not None:
+                        round_health.append(health)
+
+                lookup_results.append(lookup)
+                latest_by_lookup_value[lookup.lookup_value] = lookup
+                status_query_health.extend(round_health)
             if not recovery_plan.automatic_triggered or not latest_by_lookup_value:
                 break
             if all(
-                lookup.found and lookup.status_summary in terminal_statuses
+                lookup.found and lookup.status_summary in _TERMINAL_LOOKUP_STATUSES
                 for lookup in latest_by_lookup_value.values()
             ):
                 break

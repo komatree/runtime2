@@ -403,6 +403,8 @@ class BinanceOrderReconciliationResult:
     missing_order_ids: tuple[str, ...]
     unknown_execution_ids: tuple[str, ...]
     alerts: tuple[str, ...]
+    unknown_execution_client_order_ids: tuple[str, ...] = ()
+    unknown_execution_exchange_only_ids: tuple[str, ...] = ()
     recovery_actions: tuple[BinanceRecoveryAction, ...] = ()
 
 

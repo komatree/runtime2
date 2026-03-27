@@ -287,6 +287,47 @@ class BinanceRestrictedLivePortfolioGate:
                 ),
                 transport_result=transport_result,
             )
+        if self.order_client.can_submit_orders():
+            clock_status = self.order_client.clock_sync.check()
+            if not clock_status.is_within_tolerance:
+                blocked_translation = LivePortfolioTranslationResult(
+                    status=LiveTranslationStatus.AMBIGUOUS_REVIEW_REQUIRED,
+                    portfolio_state=portfolio_state,
+                    applied_fill_ids=(),
+                    ignored_fill_ids=(),
+                    pending_order_ids=(),
+                    alerts=tuple(
+                        dict.fromkeys(
+                            (
+                                *translation_alerts,
+                                "portfolio mutation blocked pending clock sync readiness after reconnect or restart",
+                            )
+                        )
+                    ),
+                    aggregations=(),
+                    requires_manual_attention=True,
+                )
+                return BinanceRestrictedLiveGateResult(
+                    mutation_outcome=LivePortfolioMutationOutcome(
+                        mutation_attempted=True,
+                        mutation_applied=False,
+                        portfolio_state=portfolio_state,
+                        translation_result=blocked_translation,
+                        reconciliation_events=transport_result.workflow_result.reconciliation_events,
+                        alerts=tuple(
+                            dict.fromkeys(
+                                (
+                                    *blocked_translation.alerts,
+                                    *transport_result.workflow_result.alerts,
+                                    *(alert for health in transport_result.status_query_health for alert in ((health.alert,) if health.alert else ())),
+                                    *(transport_result.batch_health.alerts if transport_result.batch_health is not None else ()),
+                                    *((clock_status.alert,) if clock_status.alert else ()),
+                                )
+                            )
+                        ),
+                    ),
+                    transport_result=transport_result,
+                )
         latest_snapshot = self._latest_full_account_snapshot(
             tuple(
                 translation.account_snapshot

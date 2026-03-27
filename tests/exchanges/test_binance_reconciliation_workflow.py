@@ -417,6 +417,66 @@ def test_gap_detected_triggers_automatic_status_query_recovery() -> None:
     assert "automatic recovery triggered by private-stream gap" in plan.alerts
 
 
+def test_unknown_execution_automatic_recovery_prefers_client_order_id_lookup() -> None:
+    service = BinanceReconciliationService()
+    plan = service.build_automatic_recovery_plan(
+        result=BinanceOrderReconciliationResult(
+            matched_order_ids=(),
+            missing_order_ids=(),
+            unknown_execution_ids=("exchange-9001",),
+            alerts=("unknown execution",),
+            unknown_execution_client_order_ids=("client-9001",),
+            recovery_actions=(),
+        ),
+        gap_detected=False,
+        resumed_from_snapshot=False,
+    )
+
+    assert plan.automatic_triggered is True
+    assert plan.trigger_reason.value == "unknown_execution"
+    assert plan.order_lookup_requests == (("client_order_id", "client-9001"),)
+
+
+def test_unknown_execution_client_lookup_falls_back_to_exchange_id_without_manual_attention() -> None:
+    transport = _UnknownExecutionFallbackLookupTransport()
+    result = BinanceReconciliationService().reconcile_with_transports(
+        expected_order_ids=(),
+        private_payloads=(
+            {
+                "e": "executionReport",
+                "E": 1773360000000,
+                "s": "BTCUSDT",
+                "i": 9001,
+                "c": "client-9001",
+                "X": "CANCELED",
+                "x": "CANCELED",
+            },
+        ),
+        private_stream_client=BinancePrivateStreamClient(config=_config()),
+        translator=_translator(),
+        order_client=BinanceOrderClient(config=_config(), clock_sync=_clock_sync()),
+        lookup_transport=transport,
+        occurred_at=_ts(),
+    )
+
+    assert transport.calls == [
+        ("client_order_id", "client-9001"),
+        ("exchange_order_id", "9001"),
+    ]
+    assert result.workflow_result.convergence_state == "converged_terminal"
+    assert result.workflow_result.recovery_trigger_reason == "unknown_execution"
+    assert result.workflow_result.recovery_summaries[0].attempts == 1
+    assert result.workflow_result.recovery_summaries[0].last_lookup_field == "exchange_order_id"
+    assert len(result.workflow_result.recovery_attempts) == 1
+    assert result.workflow_result.recovery_attempts[0].lookup_field == "exchange_order_id"
+    assert result.workflow_result.recovery_attempts[0].lookup_value == "9001"
+    assert result.workflow_result.recovery_attempts[0].attempt_number == 1
+    assert all(
+        event.reconciliation_state is not ReconciliationState.UNRECONCILED_MANUAL_ATTENTION
+        for event in result.workflow_result.reconciliation_events
+    )
+
+
 def test_gap_recovery_remains_unresolved_and_escalates_with_restart_safe_state(tmp_path: Path) -> None:
     store = JsonBinanceReconciliationStateStore(state_path=tmp_path / "reconciliation_state.json")
     result = BinanceReconciliationService().reconcile_with_transports(
@@ -500,3 +560,46 @@ class _FakeUrlOpen:
     def __call__(self, request):
         payload = self.responses.pop(0)
         return _FakeHttpResponse(payload)
+
+
+class _UnknownExecutionFallbackLookupTransport:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def lookup_by_client_order_id(self, *, client_order_id: str) -> BinanceOrderLookupResult:
+        self.calls.append(("client_order_id", client_order_id))
+        return BinanceOrderLookupResult(
+            found=False,
+            lookup_field="client_order_id",
+            lookup_value=client_order_id,
+            source="signed_rest_order_lookup",
+            status_summary=None,
+            alert="HTTP Error 400: Bad Request",
+        )
+
+    def lookup_by_exchange_order_id(self, *, exchange_order_id: str) -> BinanceOrderLookupResult:
+        self.calls.append(("exchange_order_id", exchange_order_id))
+        return BinanceOrderLookupResult(
+            found=True,
+            lookup_field="exchange_order_id",
+            lookup_value=exchange_order_id,
+            source="signed_rest_order_lookup",
+            status_summary="cancelled",
+            recovered_order_state=OrderState(
+                venue="binance",
+                order_id=exchange_order_id,
+                client_order_id="client-9001",
+                instrument_id="BTC-USDT",
+                side=OrderSide.SELL,
+                order_type=OrderType.LIMIT,
+                status=OrderStatus.CANCELED,
+                requested_quantity=Decimal("1"),
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("1"),
+                last_update_time=_ts(),
+                limit_price=Decimal("100"),
+            ),
+        )
+
+    def last_health(self):
+        return None

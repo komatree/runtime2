@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from datetime import UTC
 from datetime import datetime
+from datetime import timedelta
 from typing import Callable
 
 from .models import BinancePrivateStreamHealth
@@ -18,6 +20,9 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
+_HEARTBEAT_RECONNECT_GRACE_WINDOW = timedelta(seconds=30)
+
+
 @dataclass(frozen=True)
 class BinanceRestrictedLiveTransportStats:
     """Operator-visible private transport counters for soak reporting."""
@@ -26,9 +31,15 @@ class BinanceRestrictedLiveTransportStats:
     refresh_attempts: int = 0
     refresh_failures: int = 0
     heartbeat_overdue_events: int = 0
+    heartbeat_overdue_streak: int = 0
     session_bootstrap_count: int = 0
     last_refresh_result: str | None = None
     last_transport_error: str | None = None
+    last_heartbeat_observed_at: datetime | None = None
+    last_heartbeat_message_at: datetime | None = None
+    last_heartbeat_delta_seconds: float | None = None
+    last_heartbeat_timeout_seconds: float | None = None
+    last_heartbeat_reconnect_executed: bool | None = None
 
 
 @dataclass
@@ -44,6 +55,9 @@ class BinanceRestrictedLivePayloadSource:
         self._last_health: BinancePrivateStreamHealth | None = None
         self._stats = BinanceRestrictedLiveTransportStats()
 
+    def _replace_stats(self, **changes: object) -> None:
+        self._stats = replace(self._stats, **changes)
+
     def poll_private_payloads(self) -> tuple[dict[str, object], ...]:
         """Return the next private payload batch while maintaining session health."""
 
@@ -58,14 +72,40 @@ class BinanceRestrictedLivePayloadSource:
         if watchdog is not None:
             self._last_health = watchdog
             if any("heartbeat overdue" in alert for alert in watchdog.alerts):
-                self._stats = BinanceRestrictedLiveTransportStats(
-                    reconnect_count=self._stats.reconnect_count,
-                    refresh_attempts=self._stats.refresh_attempts,
-                    refresh_failures=self._stats.refresh_failures,
+                last_message_at = self._session.last_message_at
+                heartbeat_delta_seconds = None
+                heartbeat_timeout_seconds = self.client.heartbeat_timeout.total_seconds()
+                overdue_streak = self._stats.heartbeat_overdue_streak + 1
+                if last_message_at is not None:
+                    heartbeat_delta = occurred_at - last_message_at
+                    heartbeat_delta_seconds = heartbeat_delta.total_seconds()
+                    heartbeat_reconnect_threshold = (
+                        self.client.heartbeat_timeout + _HEARTBEAT_RECONNECT_GRACE_WINDOW
+                    )
+                    self._replace_stats(
+                        heartbeat_overdue_streak=overdue_streak,
+                        last_heartbeat_observed_at=occurred_at,
+                        last_heartbeat_message_at=last_message_at,
+                        last_heartbeat_delta_seconds=heartbeat_delta_seconds,
+                        last_heartbeat_timeout_seconds=heartbeat_timeout_seconds,
+                        last_heartbeat_reconnect_executed=False,
+                    )
+                    if heartbeat_delta <= heartbeat_reconnect_threshold:
+                        return ()
+                else:
+                    self._replace_stats(
+                        heartbeat_overdue_streak=overdue_streak,
+                        last_heartbeat_observed_at=occurred_at,
+                        last_heartbeat_message_at=None,
+                        last_heartbeat_delta_seconds=None,
+                        last_heartbeat_timeout_seconds=heartbeat_timeout_seconds,
+                        last_heartbeat_reconnect_executed=False,
+                    )
+                if overdue_streak < 2:
+                    return ()
+                self._replace_stats(
                     heartbeat_overdue_events=self._stats.heartbeat_overdue_events + 1,
-                    session_bootstrap_count=self._stats.session_bootstrap_count,
-                    last_refresh_result=self._stats.last_refresh_result,
-                    last_transport_error=self._stats.last_transport_error,
+                    last_heartbeat_reconnect_executed=True,
                 )
                 self._reconnect(occurred_at=occurred_at, reason="heartbeat overdue")
             elif watchdog.alerts and "subscription expired" in watchdog.alerts[0]:
@@ -87,14 +127,9 @@ class BinanceRestrictedLivePayloadSource:
             )
             return ()
         except Exception as exc:
-            self._stats = BinanceRestrictedLiveTransportStats(
-                reconnect_count=self._stats.reconnect_count,
-                refresh_attempts=self._stats.refresh_attempts,
-                refresh_failures=self._stats.refresh_failures,
-                heartbeat_overdue_events=self._stats.heartbeat_overdue_events,
-                session_bootstrap_count=self._stats.session_bootstrap_count,
-                last_refresh_result=self._stats.last_refresh_result,
+            self._replace_stats(
                 last_transport_error=str(exc),
+                heartbeat_overdue_streak=0,
             )
             self._reconnect(occurred_at=occurred_at, reason=str(exc))
             return (
@@ -107,6 +142,10 @@ class BinanceRestrictedLivePayloadSource:
         self._session = self.client.mark_streaming(
             session=self._session,
             occurred_at=occurred_at,
+        )
+        self._replace_stats(
+            heartbeat_overdue_streak=0,
+            last_heartbeat_reconnect_executed=None,
         )
         self._last_health = self.client.build_health_snapshot(
             session=self._session,
@@ -139,14 +178,10 @@ class BinanceRestrictedLivePayloadSource:
             transport=self.transport,
             started_at=occurred_at,
         )
-        self._stats = BinanceRestrictedLiveTransportStats(
-            reconnect_count=self._stats.reconnect_count,
-            refresh_attempts=self._stats.refresh_attempts,
-            refresh_failures=self._stats.refresh_failures,
-            heartbeat_overdue_events=self._stats.heartbeat_overdue_events,
+        self._replace_stats(
+            heartbeat_overdue_streak=0,
             session_bootstrap_count=self._stats.session_bootstrap_count + 1,
-            last_refresh_result=self._stats.last_refresh_result,
-            last_transport_error=self._stats.last_transport_error,
+            last_heartbeat_reconnect_executed=None,
         )
         self._last_health = self.client.build_health_snapshot(
             session=self._session,
@@ -162,22 +197,14 @@ class BinanceRestrictedLivePayloadSource:
                 occurred_at=occurred_at,
                 transport=self.transport,
             )
-            self._stats = BinanceRestrictedLiveTransportStats(
-                reconnect_count=self._stats.reconnect_count,
+            self._replace_stats(
                 refresh_attempts=attempts,
-                refresh_failures=self._stats.refresh_failures,
-                heartbeat_overdue_events=self._stats.heartbeat_overdue_events,
-                session_bootstrap_count=self._stats.session_bootstrap_count,
                 last_refresh_result="success",
-                last_transport_error=self._stats.last_transport_error,
             )
         except Exception as exc:
-            self._stats = BinanceRestrictedLiveTransportStats(
-                reconnect_count=self._stats.reconnect_count,
+            self._replace_stats(
                 refresh_attempts=attempts,
                 refresh_failures=self._stats.refresh_failures + 1,
-                heartbeat_overdue_events=self._stats.heartbeat_overdue_events,
-                session_bootstrap_count=self._stats.session_bootstrap_count,
                 last_refresh_result="failed",
                 last_transport_error=str(exc),
             )
@@ -200,12 +227,8 @@ class BinanceRestrictedLivePayloadSource:
             )
         except Exception:
             self._bootstrap_new_session(occurred_at=occurred_at)
-        self._stats = BinanceRestrictedLiveTransportStats(
+        self._replace_stats(
             reconnect_count=self._stats.reconnect_count + 1,
-            refresh_attempts=self._stats.refresh_attempts,
-            refresh_failures=self._stats.refresh_failures,
-            heartbeat_overdue_events=self._stats.heartbeat_overdue_events,
-            session_bootstrap_count=self._stats.session_bootstrap_count,
-            last_refresh_result=self._stats.last_refresh_result,
+            heartbeat_overdue_streak=0,
             last_transport_error=reason,
         )

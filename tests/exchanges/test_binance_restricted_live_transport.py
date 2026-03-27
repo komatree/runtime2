@@ -12,8 +12,8 @@ from app.exchanges.binance import BinancePrivateStreamReadTimeout
 from app.exchanges.binance import BinanceRestrictedLivePayloadSource
 
 
-def test_payload_source_reconnects_after_heartbeat_overdue() -> None:
-    clock = _Clock((_dt(0, 0), _dt(0, 2)))
+def test_payload_source_skips_reconnect_during_heartbeat_grace_window() -> None:
+    clock = _Clock((_dt(0, 0), _dt(0, 1)))
     transport = _FakeTransport(
         payloads=[
             _execution_payload(order_id=1001),
@@ -31,10 +31,73 @@ def test_payload_source_reconnects_after_heartbeat_overdue() -> None:
     stats = source.stats_snapshot()
 
     assert first[0]["i"] == 1001
-    assert second[0]["i"] == 1002
+    assert second == ()
+    assert stats.heartbeat_overdue_events == 0
+    assert stats.reconnect_count == 0
+
+
+def test_payload_source_reconnects_after_heartbeat_overdue() -> None:
+    clock = _Clock((_dt(0, 0), _dt(0, 1), _dt(0, 2)))
+    transport = _FakeTransport(
+        payloads=[
+            _execution_payload(order_id=1001),
+            _execution_payload(order_id=1002),
+        ]
+    )
+    source = BinanceRestrictedLivePayloadSource(
+        client=_client(),
+        transport=transport,
+        time_provider=clock.now,
+    )
+
+    first = source.poll_private_payloads()
+    second = source.poll_private_payloads()
+    third = source.poll_private_payloads()
+    stats = source.stats_snapshot()
+
+    assert first[0]["i"] == 1001
+    assert second == ()
+    assert third[0]["i"] == 1002
     assert stats.heartbeat_overdue_events == 1
     assert stats.reconnect_count == 1
+    assert stats.heartbeat_overdue_streak == 0
+    assert stats.last_heartbeat_delta_seconds == 120.0
+    assert stats.last_heartbeat_timeout_seconds == 30.0
+    assert stats.last_heartbeat_reconnect_executed is None
     assert source.current_health() is not None
+
+
+def test_payload_source_requires_two_consecutive_heartbeat_overdue_observations() -> None:
+    clock = _Clock((_dt(0, 0), _dt(0, 2), _dt(0, 4)))
+    transport = _FakeTransport(
+        payloads=[
+            _execution_payload(order_id=3001),
+            _execution_payload(order_id=3002),
+        ]
+    )
+    source = BinanceRestrictedLivePayloadSource(
+        client=_client(),
+        transport=transport,
+        time_provider=clock.now,
+    )
+
+    first = source.poll_private_payloads()
+    second = source.poll_private_payloads()
+    second_stats = source.stats_snapshot()
+    third = source.poll_private_payloads()
+    final_stats = source.stats_snapshot()
+
+    assert first[0]["i"] == 3001
+    assert second == ()
+    assert second_stats.reconnect_count == 0
+    assert second_stats.heartbeat_overdue_events == 0
+    assert second_stats.heartbeat_overdue_streak == 1
+    assert second_stats.last_heartbeat_delta_seconds == 120.0
+    assert second_stats.last_heartbeat_reconnect_executed is False
+    assert third[0]["i"] == 3002
+    assert final_stats.reconnect_count == 1
+    assert final_stats.heartbeat_overdue_events == 1
+    assert final_stats.heartbeat_overdue_streak == 0
 
 
 def test_payload_source_refreshes_on_rollover_window() -> None:
@@ -46,7 +109,7 @@ def test_payload_source_refreshes_on_rollover_window() -> None:
         ]
     )
     source = BinanceRestrictedLivePayloadSource(
-        client=_client(),
+        client=_client(heartbeat_timeout=timedelta(hours=2)),
         transport=transport,
         time_provider=clock.now,
     )
@@ -147,13 +210,13 @@ class _TimeoutTransport:
         raise BinancePrivateStreamReadTimeout("private websocket read timed out")
 
 
-def _client() -> BinancePrivateStreamClient:
+def _client(*, heartbeat_timeout: timedelta | None = None) -> BinancePrivateStreamClient:
     return BinancePrivateStreamClient(
         config=BinanceAdapterConfig(
             rest_base_url="https://api.binance.com",
             websocket_base_url="wss://stream.binance.com:9443",
         ),
-        heartbeat_timeout=timedelta(seconds=30),
+        heartbeat_timeout=timedelta(seconds=30) if heartbeat_timeout is None else heartbeat_timeout,
         session_ttl=timedelta(minutes=60),
         rollover_window=timedelta(minutes=55),
     )
